@@ -16,9 +16,6 @@ ror = lambda val, r_bits, max_bits: \
 
 
 def hmac(keyFile, messageFile, outputFile):
-    if len(keyFile) == 0 or len(messageFile) == 0 or len(outputFile) == 0:
-        print("Usage: ./hmac keyFile messageFile ouputFile")
-    print("Insufficient parameters passed")
     try:
         kFile = open(keyFile)
 
@@ -75,23 +72,31 @@ def sha256(message):
     #   we will do this at the end of the file
 
     statinfo = os.stat(message)
-    print("The length of the messageFile before preprocessing is " + str(statinfo.st_size) + " bytes")
+    print("The length of the messageFile before pre-processing is " + str(statinfo.st_size) + " bytes")
     print("And " + str(statinfo.st_size) + "(mod 64 bytes) = " + str((statinfo.st_size) % 64) + " bytes.")
     # print("Reminder: 64 bytes = 2^6 * 2^3 bits = 2^9 = 512 bits. We want so pad to 448/512 bits, or 56/64 bytes")
     numberOfPaddingBytes = 56 - (statinfo.st_size % 64)
     fh = open(message, 'rb')
     chunk = bytearray(fh.read(64))
     # Process the message in successive 512-bit chunks
+
+    # v = [0b0000] * 4 # 32 bit entries
+
     while len(chunk) == 64:
         # do sha on chunk
-        w = [None] * 64
-        for i in range(0, 15):
-            w[0] = chunk[i:i + 3]
-        for i in range(16, 63):
-            s0 = (ror(w[i - 15], 7, 32) ^ ror(w[i - 15], 18, 32) ^ w[i - 15] >> 3)
-            s1 = (ror(w[i - 2], 17, 32) ^ ror(w[i - 2], 19, 32) ^ w[i - 2] >> 10)
-            w[i] = w[i - 16] + s0 + w[i - 7] + s1
+        w = [0b0000] * 64 * 4  # 32 bit entries
 
+        for i in range(0, 15 * 4):
+            # copy chunk into first 16 words w[0..15] of the message schedule array
+            # one entry in w is four times as big as one entry in chunk
+            w[i: i + 3] = chunk[i:i + 3]
+            # print(w[0:68])
+        for i in range(16 * 4, 63 * 4):
+        #   print(w[i]) # The following assumes 32 bit = 4 byte words.
+        #   s0 = (ror(w[i - 15 * 4:], 7, 32) ^ ror(w[i - 15 * 4], 18, 32) ^ w[i - 15 * 4] >> 3)
+        #   s1 = (ror(w[i - 2 * 4], 17, 32) ^ ror(w[i - 2 * 4], 19, 32) ^ w[i - 2] >> 10)
+        # w[i] = w[i - 16] + s0 + w[i - 7] + s1
+        # print(w[i])
         chunk = bytearray(fh.read(64))
 
     print("length of file is " + str(len(chunk)))
@@ -109,4 +114,12 @@ def sha256(message):
     #   new_buffer.write()
 
 
-hmac(str(sys.argv[1]), str(sys.argv[2]), str(sys.argv[3]))
+def do_hmac():
+    if not len(sys.argv) < 3:
+        hmac(str(sys.argv[1]), str(sys.argv[2]), str(sys.argv[3]))
+    if len(sys.argv) <= 2:
+        print("Insufficient parameters passed")
+        print("Usage: ./hmac keyFile messageFile ouputFile")
+
+
+do_hmac()
