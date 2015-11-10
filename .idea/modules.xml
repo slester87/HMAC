@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/HMAC.iml" filepath="$PROJECT_DIR$/.idea/HMAC.iml" />
       <module fileurl="file://$USER_HOME$/PycharmProjects/HMAC/.idea/HMAC.iml" filepath="$USER_HOME$/PycharmProjects/HMAC/.idea/HMAC.iml" />
     </modules>
   </component>

@@ -28,6 +28,18 @@ def hmac(keyFile, messageFile, outputFile):
         print("all done")
 
 
+class FourByteWord:
+    s = bytes()
+
+    def __init__(self, byte_array):
+        i = 0
+
+        while i < 4:
+            s = s + bytes(byte_array[i])
+
+
+
+
 # From wiki:
 #   Note 1: All variables are 32 bit unsigned integers and addition is calculated modulo 232
 #   Note 2: For each round, there is one round constant k[i] and
@@ -86,16 +98,21 @@ def sha256(message):
         # do sha on chunk
         w = [0b0000] * 64 * 4  # 32 bit entries
 
-        for i in range(0, 15 * 4):
+        for i in range(0,63):
             # copy chunk into first 16 words w[0..15] of the message schedule array
             # one entry in w is four times as big as one entry in chunk
-            w[i: i + 3] = chunk[i:i + 3]
-            # print(w[0:68])
-        for i in range(16 * 4, 63 * 4):
-        #   print(w[i]) # The following assumes 32 bit = 4 byte words.
-        #   s0 = (ror(w[i - 15 * 4:], 7, 32) ^ ror(w[i - 15 * 4], 18, 32) ^ w[i - 15 * 4] >> 3)
-        #   s1 = (ror(w[i - 2 * 4], 17, 32) ^ ror(w[i - 2 * 4], 19, 32) ^ w[i - 2] >> 10)
-        # w[i] = w[i - 16] + s0 + w[i - 7] + s1
+
+            w[i] = chunk[i]
+            print(w[i])
+
+        i = 64
+        while i < 63*4:
+            # Need a four byte word class
+            print(w[i]) # The following assumes 32 bit = 4 byte words.
+            s0 = (ror(w[i - 15 * 4], 7, 32) ^ ror(w[i - 15 * 4], 18, 32) ^ w[i - 15 * 4] >> 3)
+            s1 = (ror(w[i - 2 * 4], 17, 32) ^ ror(w[i - 2 * 4], 19, 32) ^ w[i - 2 * 4] >> 10)
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1
+            i += 4
         # print(w[i])
         chunk = bytearray(fh.read(64))
 
