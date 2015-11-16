@@ -2,6 +2,7 @@ __author__ = 'Skip'
 import sys
 import traceback
 import os
+import struct
 import array
 
 # Rotate left: 0b1001 --> 0b0011
@@ -15,7 +16,16 @@ ror = lambda val, r_bits, max_bits: \
     (val << (max_bits - (r_bits % max_bits)) & (2 ** max_bits - 1))
 
 
+def safe_add(x, y):
+    #lsw = (x & 0xFFFF) + (y & 0xFFFF)
+    #msw = (x >> 16) + (y >> 16) + (lsw >> 16)
+    #return ((msw << 16) | (lsw & 0xFFFF)) & 0xFFFFFFFF
+    return (x + y) % 0x100000000
+
 def hmac(keyFile, messageFile, outputFile):
+    print("{0:32b}".format(0xA00B0C0D))
+    print("{0:32b}".format(rol(0xA00B0C0D, 4, 32)))
+
     try:
         kFile = open(keyFile)
 
@@ -36,8 +46,6 @@ class FourByteWord:
 
         while i < 4:
             s = s + bytes(byte_array[i])
-
-
 
 
 # From wiki:
@@ -66,7 +74,7 @@ def sha256(message):
     # Initialize array of round constants:
     # ((first 32 bits of the fractional parts of the
     # cube roots of the first 64 primes 2..311):
-    roundConstants = [
+    round_constants = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
         0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
         0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -86,49 +94,140 @@ def sha256(message):
     statinfo = os.stat(message)
     print("The length of the messageFile before pre-processing is " + str(statinfo.st_size) + " bytes")
     print("And " + str(statinfo.st_size) + "(mod 64 bytes) = " + str((statinfo.st_size) % 64) + " bytes.")
+
     # print("Reminder: 64 bytes = 2^6 * 2^3 bits = 2^9 = 512 bits. We want so pad to 448/512 bits, or 56/64 bytes")
-    numberOfPaddingBytes = 56 - (statinfo.st_size % 64)
+    numberOfPaddingBytes = 56 - (statinfo.st_size % 64) - 1
+    print("The number of 0x00 bytes is " + str(numberOfPaddingBytes))
     fh = open(message, 'rb')
+
     chunk = bytearray(fh.read(64))
+
     # Process the message in successive 512-bit chunks
+    chunk_num = 0
 
     # v = [0b0000] * 4 # 32 bit entries
+    on_last_chunk = False
+    has_extra_chunk = False
+    while True:
 
-    while len(chunk) == 64:
+        # padding
+        if (len(chunk) < 56):
+            on_last_chunk = True
+            orig_chunk_len = len(chunk)
+            temp_chunk = bytearray(b'\x00' * 64)
+            j = 0
+            while j < orig_chunk_len:
+                temp_chunk[j] = chunk[j]
+                j += 1
+
+            temp_chunk[orig_chunk_len] = 0x80
+            chunk = temp_chunk
+            file_len = struct.pack('>Q', int(statinfo.st_size * 8))
+            j = 56
+            while j < 64:
+                chunk[j] = file_len[j - 56]
+                j += 1
+        # TODO Write
+        elif (len(chunk) < 64):
+            chunk[len(chunk) + 1] = 0x80
+            has_extra_chunk = True
+            chunk = pad_last_chunk(chunk)
+
         # do sha on chunk
-        w = [0b0000] * 64 * 4  # 32 bit entries
+        # w = [0b0000] * 64 * 4  # 32 bit entries
 
-        for i in range(0,63):
+        w = [0x00000000] * 64
+
+        i = 0
+        while i < 16:
             # copy chunk into first 16 words w[0..15] of the message schedule array
             # one entry in w is four times as big as one entry in chunk
+            buffer = [0b00000000] * 4
+            buffer[0] = chunk[i * 4]
+            buffer[1] = chunk[i * 4 + 1]
+            buffer[2] = chunk[i * 4 + 2]
+            buffer[3] = chunk[i * 4 + 3]
+            # ToDo: double check endian-ness
+            w[i] = int(struct.unpack('>I', bytes(buffer))[0])
+            i += 1
+        i = 16
 
-            w[i] = chunk[i]
-            print(w[i])
-
-        i = 64
-        while i < 63*4:
+        while i < 64:
             # Need a four byte word class
-            print(w[i]) # The following assumes 32 bit = 4 byte words.
-            s0 = (ror(w[i - 15 * 4], 7, 32) ^ ror(w[i - 15 * 4], 18, 32) ^ w[i - 15 * 4] >> 3)
-            s1 = (ror(w[i - 2 * 4], 17, 32) ^ ror(w[i - 2 * 4], 19, 32) ^ w[i - 2 * 4] >> 10)
-            w[i] = w[i - 16] + s0 + w[i - 7] + s1
-            i += 4
+            # print(w[i]) # The following assumes 32 bit = 4 byte words.
+            s0 = (ror((w[i - 15]), 7, 32) ^ ror((w[i - 15]), 18, 32) ^ (w[i - 15] >> 3))
+            s1 = (ror(w[i - 2], 17, 32) ^ ror(w[i - 2], 19, 32) ^ (w[i - 2] >> 10))
+            w[i] = safe_add(w[i - 16], safe_add(s0, safe_add(w[i - 7], s1)))
+            i += 1
         # print(w[i])
+
+        #    Initialize working variables to current hash value:
+        a = h0
+        b = h1
+        c = h2
+        d = h3
+        e = h4
+        f = h5
+        g = h6
+        h = h7
+
+        # Compression from main loop:
+        i = 0
+        while i < 64:
+            s1 = ror(e, 6, 32) ^ ror(e, 11, 32) ^ ror(e, 25, 32)
+            ch = (e & f) ^ (~e & g)
+            temp1 = safe_add(h, safe_add(s1, safe_add(ch, safe_add(round_constants[i], w[i]))))
+            s0 = ror(a, 2, 32) ^ ror(a, 13, 32) ^ ror(a, 22, 32)
+            maj = (a & b) ^ (a & c) ^ (b & c)
+            temp2 = safe_add(s0, maj)
+
+            h = g
+            g = f
+            f = e
+            e = safe_add(d, temp1)
+            d = c
+            c = b
+            b = a
+            a = safe_add(temp1, temp2)
+
+            i += 1
+
+        # Add the compressed chunk to the current hash value:
+        h0 = safe_add(h0, a)
+        h1 = safe_add(h1, b)
+        h2 = safe_add(h2, c)
+        h3 = safe_add(h3, d)
+        h4 = safe_add(h4, e)
+        h5 = safe_add(h5, f)
+        h6 = safe_add(h6, g)
+        h7 = safe_add(h7, h)
+
+
+        # Produce the final hash value (big-endian)
+
+        # Everything above here is SHA
+        if (on_last_chunk):
+            break
+
         chunk = bytearray(fh.read(64))
-
-    print("length of file is " + str(len(chunk)))
-    print(" number of padding bits is " + str(numberOfPaddingBytes))
-    padding = bytearray(numberOfPaddingBytes)
-    padding[0] = 0x80
+        chunk_num += 1
 
 
-    # writing out the padded to file for debugging, for now
-    # think about edge case where the file is 56 mod 64 as desired but we still need to pad
-    # with open(message, 'rb') as old_buffer, open('paddedFile', 'wb') as new_buffer:
-    # copy the old file completely
-    #    new_buffer.write(old_buffer.read(statinfo.st_size))
-    # and pad it as required
-    #   new_buffer.write()
+    # digest = append h0, h1, ..., h7
+    digest = [0x00000000] * 8
+    digest[0] = h0
+    digest[1] = h1
+    digest[2] = h2
+    digest[3] = h3
+    digest[4] = h4
+    digest[5] = h5
+    digest[6] = h6
+    digest[7] = h7
+
+    j = 0
+    while j < 8:
+        print("{0:x}".format(digest[j]))
+        j += 1
 
 
 def do_hmac():
