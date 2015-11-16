@@ -17,18 +17,15 @@ ror = lambda val, r_bits, max_bits: \
 
 
 def safe_add(x, y):
-    #lsw = (x & 0xFFFF) + (y & 0xFFFF)
-    #msw = (x >> 16) + (y >> 16) + (lsw >> 16)
-    #return ((msw << 16) | (lsw & 0xFFFF)) & 0xFFFFFFFF
+    # lsw = (x & 0xFFFF) + (y & 0xFFFF)
+    # msw = (x >> 16) + (y >> 16) + (lsw >> 16)
+    # return ((msw << 16) | (lsw & 0xFFFF)) & 0xFFFFFFFF
     return (x + y) % 0x100000000
 
+
 def hmac(keyFile, messageFile, outputFile):
-    print("{0:32b}".format(0xA00B0C0D))
-    print("{0:32b}".format(rol(0xA00B0C0D, 4, 32)))
-
     try:
-        kFile = open(keyFile)
-
+        sha256_hmac(keyFile, messageFile)
         sha256(messageFile)
     except IOError:
         print("Seems like there's no such file")
@@ -38,15 +35,37 @@ def hmac(keyFile, messageFile, outputFile):
         print("all done")
 
 
-class FourByteWord:
-    s = bytes()
+def get_hmac_key(key_file):
+    fh = open(key_file, 'rb')
+    return bytearray(fh.read(64))
 
-    def __init__(self, byte_array):
-        i = 0
 
-        while i < 4:
-            s = s + bytes(byte_array[i])
+def sha256_hmac(hmac_key_file, message_file):
+    hmac_key = get_hmac_key(hmac_key_file)
 
+    message_file_bits = os.stat(message_file).st_size * 8
+    fh = open(message_file, 'rb')
+
+    inner_key_block = [0x36] * 64
+    outer_key_block = [0x5C] * 64
+    for i in range(0, len(hmac_key)):
+        inner_key_block[i] ^= hmac_key[i]
+        outer_key_block[i] ^= hmac_key[i]
+
+    inner_hash = sha256_impl(lambda: inner_key_block, lambda: fh.read(64), message_file_bits + 512)
+    print(str(inner_hash))
+    padded_inner_hash = [0x00] * 32;
+    for i in range(0, 8):
+        inner_hash_bytes = struct.pack('>L', inner_hash[i])
+        padded_inner_hash[i*4] = inner_hash_bytes[0]
+        padded_inner_hash[i*4+1] = inner_hash_bytes[1]
+        padded_inner_hash[i*4+2] = inner_hash_bytes[2]
+        padded_inner_hash[i*4+3] = inner_hash_bytes[3]
+
+    outer_hash = sha256_impl(lambda: outer_key_block, lambda: padded_inner_hash, 768)
+
+    print ('hexarray')
+    print_hex_array(outer_hash)
 
 # From wiki:
 #   Note 1: All variables are 32 bit unsigned integers and addition is calculated modulo 232
@@ -59,6 +78,20 @@ class FourByteWord:
 
 # @param message The seed of the secure hashing algorithm
 def sha256(message):
+    statinfo = os.stat(message)
+    print("The length of the messageFile before pre-processing is " + str(statinfo.st_size) + " bytes")
+    print("And " + str(statinfo.st_size) + "(mod 64 bytes) = " + str((statinfo.st_size) % 64) + " bytes.")
+
+    # print("Reminder: 64 bytes = 2^6 * 2^3 bits = 2^9 = 512 bits. We want so pad to 448/512 bits, or 56/64 bytes")
+    numberOfPaddingBytes = 56 - (statinfo.st_size % 64) - 1
+    print("The number of 0x00 bytes is " + str(numberOfPaddingBytes))
+    fh = open(message, 'rb')
+
+    computed_hash = sha256_impl(lambda: None, lambda: fh.read(64), statinfo.st_size * 8)
+    return computed_hash
+
+
+def sha256_impl(get_first_chunk, get_next_chunk, message_length_bits, final_chunk = None):
     # Initialize the hash values
     # (first 32 bits of the fractional parts of the
     # square roots of the first 8 primes, 2...19)
@@ -91,16 +124,10 @@ def sha256(message):
     #   append len(message) in bits, as 64 bit (8 byte) big endian integer
     #   we will do this at the end of the file
 
-    statinfo = os.stat(message)
-    print("The length of the messageFile before pre-processing is " + str(statinfo.st_size) + " bytes")
-    print("And " + str(statinfo.st_size) + "(mod 64 bytes) = " + str((statinfo.st_size) % 64) + " bytes.")
-
-    # print("Reminder: 64 bytes = 2^6 * 2^3 bits = 2^9 = 512 bits. We want so pad to 448/512 bits, or 56/64 bytes")
-    numberOfPaddingBytes = 56 - (statinfo.st_size % 64) - 1
-    print("The number of 0x00 bytes is " + str(numberOfPaddingBytes))
-    fh = open(message, 'rb')
-
-    chunk = bytearray(fh.read(64))
+    if (get_first_chunk() == None):
+        chunk = bytearray(get_next_chunk())
+    else:
+        chunk = bytearray(get_first_chunk())
 
     # Process the message in successive 512-bit chunks
     chunk_num = 0
@@ -111,7 +138,7 @@ def sha256(message):
     while True:
 
         # padding
-        if (len(chunk) < 56):
+        if (len(chunk) < 56 | on_last_chunk):
             on_last_chunk = True
             orig_chunk_len = len(chunk)
             temp_chunk = bytearray(b'\x00' * 64)
@@ -122,13 +149,14 @@ def sha256(message):
 
             temp_chunk[orig_chunk_len] = 0x80
             chunk = temp_chunk
-            file_len = struct.pack('>Q', int(statinfo.st_size * 8))
+            file_len = struct.pack('>Q', int(message_length_bits))
             j = 56
             while j < 64:
                 chunk[j] = file_len[j - 56]
                 j += 1
-        # TODO Write
+
         elif (len(chunk) < 64):
+            # TODO Write
             chunk[len(chunk) + 1] = 0x80
             has_extra_chunk = True
             chunk = pad_last_chunk(chunk)
@@ -202,16 +230,19 @@ def sha256(message):
         h6 = safe_add(h6, g)
         h7 = safe_add(h7, h)
 
-
         # Produce the final hash value (big-endian)
 
         # Everything above here is SHA
         if (on_last_chunk):
             break
 
-        chunk = bytearray(fh.read(64))
+        next_chunk = get_next_chunk()
+        if (next_chunk == None and final_chunk != None):
+            chunk = bytearray(final_chunk)
+            on_last_chunk = True
+        else:
+            chunk = bytearray(next_chunk)
         chunk_num += 1
-
 
     # digest = append h0, h1, ..., h7
     digest = [0x00000000] * 8
@@ -223,10 +254,13 @@ def sha256(message):
     digest[5] = h5
     digest[6] = h6
     digest[7] = h7
+    return digest
 
+
+def print_hex_array(array):
     j = 0
-    while j < 8:
-        print("{0:x}".format(digest[j]))
+    while j < len(array):
+        print("{0:x}".format(array[j]))
         j += 1
 
 
